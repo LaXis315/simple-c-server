@@ -1,0 +1,173 @@
+Questo manuale riassume i passaggi per la creazione di un server in SO UNIX.
+
+To accept connections, the following steps are performed:
+
+        1.  A socket is created with socket(2).
+
+        2.  The socket is bound to a local address using bind(2), so that other sockets may be connect(2)ed to it.
+
+        3.  A willingness to accept incoming connections and a queue limit for incoming connections are specified with listen().
+
+	4.  Connections are accepted with accept(2).
+
+1) Il primo passaggio è abbastanza semplice:
+
+creiamo un socket con
+ 	
+	#include <sys/socket.h>
+	int socket(int domain, int type, int protocol);
+
+il dominio indica la famiglia di protocolli da utilizzare, queste sono definite in sys/socket.h e informazioni su di esse sono visibili con "man address_families"
+il type indica invece la semantica della comunicazione
+il protocol invece indica quale protocollo scegliere dal dominio. con "man 5 protocols" possiamo vedere il numero associato ad ogni protocollo di ogni dominio, con "man 3 getprotoent" invece per vedere come mappare la strigna con nome di un protocollo al suo numero
+
+il risultato sarà un descrittore di file, che è semplicemente un numero intero che il SO saprà mappare con il socket creato.
+
+2) Ora il socket va associato ad una coppia (indirizzo, porta) che possono anche essere generici o decisi dal SO. Solitamente vogliamo essere noi a scegliere.
+
+	per fare ciò useremo la struttura:
+
+	#include <netinet/in.h>
+
+	struct sockaddr_in{
+           sa_family_t     sin_family;   //ex AF_INET. questo parametro indica la famiglia di protocolli. deve essere uguale a quella del socket
+           in_port_t       sin_port;     //Port number, integer number.
+           struct in_addr  sin_addr;     //IP address.
+	};
+
+	struct in_addr {
+            in_addr_t s_addr;
+        };
+
+dobbiamo assegnare i valori ai vari parametri.
+	
+	#include <arpa/inet.h>	
+
+	addr_in.sin_family = AF_INET;  //impostiamo la famiglia
+	addr_in.sin_addr.s_addr = htonl(INADDR_ANY);//inet_addr("127.0.0.1"); //impostiamo l'indirizzo
+	addr_in.sin_port = htons(port);  //scegliamo la porta
+
+come possiamo vedere, stiamo utilizzando la funzione htons e htonl che significano rispettivamente: host-to-network small/long.
+Sono necessarie perchè solitamente l'host salva i dati con ordine little-endian, mentre il network è Big-endian. Perciò bisogna convertire i dati.
+
+Dato che le funzioni in <sys/socket.h> non utilizizzano struct sockaddr_in, ma la struttura generica struct sockaddr, bisogna fare un casting dalla prima alla seconda.
+
+	struct sockaddr{
+		sa_family_t  sa_family;  //Address family.
+           	char         sa_data[];  //Socket address and other data(variable-length data). 
+	};
+
+sin _addr e sin_port saranno racchiusi in sa_data. Le funzioni di sys/socket richiedono la grandezza della struttura in modo da sapere quanti byte leggere in sa_data[].
+
+2.1) Ora abbiamo tutto il necessario per utilizzare bind();
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+
+richiede il file descriptor del socket da bindare, la struttura indicante indirizzo e porta che abbiamo creato precedentemente per poi castare, e infine la grandezza di tale struttura. Possiamo utilizzare sizeof(struct sockaddr_in) oppure il sizeof della struttura inizializzata
+
+2.2) Una alternativa dei passaggi precedenti era fattibile utilizzando la libreria <netdb.h>; ecco come:
+
+Questa libreria definisce la struttura seguente:
+	
+	#include <netdb.h>
+
+	struct addrinfo {
+               int              ai_flags;
+               int              ai_family;
+               int              ai_socktype;
+               int              ai_protocol;
+               socklen_t        ai_addrlen;
+               struct sockaddr *ai_addr;
+               char            *ai_canonname;
+               struct addrinfo *ai_next;
+        };
+
+Inoltre ci fornisce la seguente funzione:
+
+	int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res);
+
+Indicando con node e service un indirizzo e ip (che possono anche essere NULL o generici) e ulteriori dati passando hints
+ai_family, ai_socktype, and ai_protocol in struct addrinfo possono essere utilizzati per indicare la famiglia di protocolli, il tipo di socket e il protocollo specifico della famiglia. Inoltre ai_flags serve ad indicare ulteriori parametri.
+
+La funzione ci ritorna una lista di addrinfo che rispondono a quanto richiesto da noi. Questo è estremamente utile se non vogliamo  cercare manualmente ogni possibile sockaddr. Inoltre ci fornisce direttamente sockaddr, evitandoci di utilizzare la sockaddr_in e la sua libreria.
+
+Se viene ritornato un valore diverso da 0, possiamo usare la funzione della libreria gai_strerror(int value) per vedere l'errore.
+Quando non ci serve più la lista di strutture bindabili, è buona prassi liberare la memoria allocata dalla funzione, utilizzando freeaddrinfo(struct addrinfo * res);
+
+3) Ora dobbiamo ascoltare le eventuali connessioni. useremo:
+
+	int listen(int sockfd, int backlog);
+
+la funzione ci permette di ascoltare connessione arrivate al socket descritto in sockfd; inoltre il numero massimo di connessioni in attesa di essere lette sono segnate in backlog. (con 1 avremo 1 connessione per volta, le altre saranno scartate)
+
+4) Ora dobbiamo aspettare che ci siano connessioni in entrata all'indirizzo e porta da noi deciso.
+Abbiamo due modi per farlo:
+
+	- tramite polling ciclico (ci permette di aspettare la connessione assicurandoci di non essere bloccati quando accettiamo)
+	- usando accept() direttamente (se si usa questa funzione quando non vi sono connessioni in attesa, verremo bloccati fino all'arrivo di una di queste)
+
+Se vogliamo utilizzare dei thread per gestire multiple richieste di connessione, è saggio utilizzare il polling.
+
+	#include <poll.h>
+	
+	struct pollfd {
+               int   fd;         /* file descriptor */
+               short events;     /* requested events */
+               short revents;    /* returned events */
+        };
+
+la struttura pollfd definita dalla libreria ci permette di indicare il descrittore di file di nostro interesse (nel nostro caso il file descriptor del socket)
+e gli eventi che vogliamo aspettare.
+
+in events quindi possiamo passare dei flag. Multipli flag possono essere passati usando l'operatore di OR.
+
+ex. struct pollfd fds;
+    fds.fd = sockfd;
+    fds.events = POLLIN;
+
+Richiederemo il polling usando la funzione di libreria:
+	
+	int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+	
+dove passeremo la struttura descritta prima, un numero nfds_t nfds che indica il numero di filedescriptor da pollare (possiamo pollare più file descriptor, infatti passiamo un puntatore per questo motivo)
+inoltre possiamo indicare per quanto tempo attendere prima di fare altro usando int timeout; utilizzando un numero negativo il timeout sarà INFINITO.
+
+Una volta che si esce dalla funzione, bisogna controllare in fds il valore di revents. Questa variabile conterrà informazioni sullo stato del file; se qualche valore corrisponde a un paramentro in events, allora significa che è disponibile quanto richiesto da noi (in teoria sono disponibili i dati).
+
+I casi di uscita dalla funzione sono:
+
+- fine del timeout (impossibile se infinito)
+- ricezione di segnale esterno
+- un flag passato in events è stato confermato e inserito in revents
+
+5) a questo punto siamo in grado di accettare la nostra connessione.
+
+useremo la funzione:
+	
+	int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
+come al solito bisogna passare il descrittore del socket, e in più due puntatori ad addr e addrlen, opportunamente dichiarati precedentemente.
+Il motivo di ciò è perchè all'uscita dalla funzione, sarà scritto dentro addr le informazioni sul peer che sta cercando di connettersi.
+È molto importante che addr sia "ripulito" usando per esempio memset(), e che addrlen indichi la grandezza in byte di addr.
+
+Al ritorno addrlen indicherà la grandezza dell'indirizzo del peer.
+
+Altra cosa importante, accept ritorna un intero che è un altro file descriptor di un socket in stato di connessione con il peer.
+	
+	#include <string.h>
+	
+	int sockfd_conn;
+	sockaddr_in peer_addr;
+	memset(&peer_addr, 0, sizeof(peer_addr));
+
+	socklen_t peer_addrlen = sizeof(peer_addr);
+	
+	sockfd_conn = accept(sockfd, (sockaddr *)&peer_addr, &peer_addrlen);
+
+Per leggere informazioni del peer possiamo utilizzare le funzioni getsockname() to get local socket address and getpeername() the peer address.
+
+	int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+
+Dovremo passare il file descriptor del socket CONNESSO e riceveremo i dati su addr e addrlen (come è stato per accept)
+
+

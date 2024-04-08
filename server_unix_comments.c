@@ -167,22 +167,28 @@ int make_socket(char* port){
 }
 
 void accepting(int sockfd){
-
-	int sockfd_conn;
+    /* int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen); */
+	/*  If no pending connections are present on the queue, and the socket is not marked as nonblocking, accept() blocks the caller until a connection is present.  If the socket is marked nonblocking  and
+       no pending connections are present on the queue, accept() fails with the error EAGAIN or EWOULDBLOCK. */
     sockaddr_in peer_addr;
     socklen_t peer_addrlen = sizeof(peer_addr);
 
     memset(&peer_addr, 0, sizeof(peer_addr));
 
     
-    sockfd_conn = accept(sockfd, (sockaddr *)&peer_addr, &peer_addrlen);  //al ritorno dalla funzione, riceveremo l'indirizzo del peer in peer_addr
+    accept(sockfd, (sockaddr *)&peer_addr, &peer_addrlen);  //al ritorno dalla funzione, riceveremo l'indirizzo del peer in peer_addr
     printf("Richiesta in arrivo!\n");
+    printf("Accettata!\n");
 
     print_addr((sockaddr *)&peer_addr);
     return;
     /*peer_addrlen on return it will contain the actual size of the peer address.
       and peer_addr the address itself
+    
+      we can use getsockname() to get local socket address and getpeername() the peer address.    
     */
+
+    
 }
 
 int main(int argc, char* argv[]){
@@ -191,10 +197,32 @@ int main(int argc, char* argv[]){
 		printf("Usare: %s [port]",argv[0]);
 	}
 
-	/*MAKE SOCKET AND BINDING---------------------------*/
-	int sockfd = make_socket(argv[1]);
+		/*To accept connections, the following steps are performed:
+
+           1.  A socket is created with socket(2).
+
+           2.  The socket is bound to a local address using bind(2), so that other sockets may be connect(2)ed to it.
+
+           3.  A willingness to accept incoming connections and a queue limit for incoming connections are specified with listen().
+
+           4.  Connections are accepted with accept(2).
+    	*/
+
+	/*int sockfd = file_descriptor();
+	
+	printf("\nsockfd: %d\n",sockfd);
+
+	sockaddr *addr;
+	sockaddr_in addr_in;
+
+	addr = (sockaddr *) &addr_in;  //grazie a questo casting, le funzioni della libreria socket possono leggere addr_in tramite il puntatore addr*/
+
+	//mando un doppio puntatore in modo da aggiornare il puntatore senza dover fare un return da binding
+	int sockfd = make_socket(argv[1]);  //bindiamo il socket alla nostra porta e indirizzo
+
+	/*When listen(2) is called on an unbound socket, the socket is automatically bound to a random free port with the local address set to INADDR_ANY. */
+	// 
     
-    /*LISTENING-----------------------------------------*/
     errno = 0;
 	int value = listen(sockfd, MAX_QUEUE);  //sockfd è il descrittore del socket, mentre MAX_QUEUE è il numero massimo di connessioni ascoltabili in un dato momento
 
@@ -203,7 +231,22 @@ int main(int argc, char* argv[]){
 		return -1;
 	}
 
-/*POLLING------------------------------------------------*/
+	/* int poll(struct pollfd *fds, nfds_t nfds, int timeout); 
+
+	poll() performs a similar task to select(2): it waits for one of a set of file descriptors to become ready to perform I/O.
+
+	struct pollfd {
+               int   fd;          //The field fd contains a file descriptor for an open file.
+               short events;      //The  field  events is an input parameter, a bit mask specifying the events the application is interested in for the file descriptor fd. The values must be constructed by OR'ing some flags descripted in poll(3)
+               short revents;     //The field revents is an output parameter, filled by the kernel with the events that actually occurred. The bits returned in revents can include any of those specified in events, or one of the values POLLERR, POLLHUP, or POLLNVAL.
+    };
+	
+	The caller should specify the number of items in the fds array in nfds.
+
+	The timeout argument specifies the number of milliseconds that poll() should block waiting for a file descriptor to become ready.
+
+	Il blocco sussiste fino a quando il file descriptor non è pronto o finisce il timeout (se infinito non finirà mai). Specifying a negative value in timeout means an infinite timeout.
+	*/
 
 	struct pollfd fds;
 
@@ -212,14 +255,16 @@ int main(int argc, char* argv[]){
 
 	while(1){
 		printf("\n\nIn attesa di connessioni...\n");
-		memset(&(fds.revents), 0, sizeof(fds.revents));
+		memset(&(fds.revents), 0, sizeof(fds.revents));  //resettiamo ogni volta revents per poter avere una descrizione sempre nuova di come è andato il polling
 		errno = 0;
-		value = poll(&fds, 1, -1); //infinite polling
+		value = poll(&fds, 1, -1);  //polliamo 1 file per INFINITO tempo
 
 		if(value == -1){
 			if(errno == EINTR) printf("Segnale catturato durante il polling");
 			return -1;
 		}
+
+		//leggiamo revents per capire se possiamo accettare la richiesta di connessione
 
 		if((fds.revents & POLLHUP) || (fds.revents & POLLERR) || (fds.revents & POLLNVAL)){
 			printf("Errore con il socket, disconnessione dal socket in corso...");
@@ -234,5 +279,6 @@ int main(int argc, char* argv[]){
 	}
 
 	//per poter connettersi da fuori il pc, è necessario fare un forwarding dall'ip dell'host a quello del wsl
+
 	/*netsh interface portproxy add v4tov4 listenport=<yourPortToForward> listenaddress=0.0.0.0 connectport=<yourPortToConnectToInWSL> connectaddress=(wsl hostname -I)*/
 }
