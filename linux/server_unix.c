@@ -17,7 +17,7 @@
 
 #include <poll.h>  //libreria per il polling del file descriptor (attendiamo che ci sia una richiesta i/o)
 
-#define MAX_QUEUE 1 //numero massimo di richieste di connessioni permesse in un dato momento
+#define MAX_QUEUE 2 //numero massimo di richieste di connessioni permesse in un dato momento
 
 typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
@@ -29,7 +29,7 @@ typedef struct thread_info {  //struttura per passare parametri al thread
 
 void print_addr(sockaddr *addr, int thread_number){
 	printf("\n\nConnessione n.%d Info:\n\n", thread_number);
-	printf("FAMILY: %d\n", addr->sa_family);
+	//printf("FAMILY: %d\n", addr->sa_family);
 	sockaddr_in * addr_in = (sockaddr_in *) addr;
 	printf("ADDR: %s \nPORT: %d\n", inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
 }

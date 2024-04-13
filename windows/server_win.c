@@ -16,9 +16,15 @@
 
 #define MAX_QUEUE 2 //numero massimo di richieste di connessioni permesse in un dato momento
 
+typedef struct thread_info {  //struttura per passare parametri al thread
+	SOCKET AcceptSocket;
+	SOCKADDR_IN peer_addr;
+	int thread_number;
+} thr_info;
+
 void print_addr(SOCKADDR_IN *addr){
 	//printf("\nInfo:\n\n");
-	printf("FAMILY: %d\n", addr->sin_family);
+	//printf("FAMILY: %d\n", addr->sin_family);
 	printf("ADDR: %s \nPORT: %d\n", inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
 	putc('\n',stdout);
 }
@@ -58,26 +64,13 @@ SOCKET make_socket(char* port){
     return ListenSocket;
 }
 
-char accepting(SOCKET ListenSocket){
+void connecting(void *param){
 
-	SOCKET AcceptSocket;
-    SOCKADDR_IN peer_addr;
-    int peer_addrlen = sizeof(peer_addr);
+	SOCKET *AcceptSocket = &(((thr_info *)param)->AcceptSocket);
+	SOCKADDR_IN *peer_addr = &(((thr_info *)param)->peer_addr);
+	int *connection_id = &(((thr_info *)param)->thread_number);
 
-    memset(&peer_addr, 0, peer_addrlen);
-
-    AcceptSocket = accept(ListenSocket, (SOCKADDR *)&peer_addr, &peer_addrlen);  //al ritorno dalla funzione, riceveremo l'indirizzo del peer in peer_addr
-
-    if (AcceptSocket == INVALID_SOCKET) {
-        wprintf(L"accept failed with error: %ld\n", WSAGetLastError());
-        closesocket(ListenSocket);
-        WSACleanup();
-        return -1;
-    } else{
-    	wprintf(L"\nNew Client connected:\n");
-    }
-
-    print_addr(&peer_addr);
+    print_addr(peer_addr);
 
     char buffer[1024];
     char *pointer;
@@ -86,12 +79,13 @@ char accepting(SOCKET ListenSocket){
 
     do{
 
-		data_size = recv(AcceptSocket, buffer, 1024, 0);
+		data_size = recv(*AcceptSocket, buffer, 1024, 0);
 
 		if(data_size == SOCKET_ERROR){
 			if(WSAGetLastError() == 10054) wprintf(L"Client disconnesso\n\n");
-			closesocket(AcceptSocket);
-        	return 0;	
+			closesocket(*AcceptSocket);
+			free(param);
+        	return;	
 		}
 		else if(data_size == 0) continue;
 
@@ -106,10 +100,8 @@ char accepting(SOCKET ListenSocket){
 
 	}while(data_size);
 
-	closesocket(AcceptSocket);
-
-	return 0;
-	
+	closesocket(*AcceptSocket);
+	free(param);
 }
 
 int main(int argc, char* argv[]){
@@ -137,6 +129,7 @@ int main(int argc, char* argv[]){
     
     /*LISTENING-----------------------------------------*/
 	iResult = listen(ListenSocket, MAX_QUEUE);  //sockfd è il descrittore del socket, mentre MAX_QUEUE è il numero massimo di connessioni ascoltabili in un dato momento
+	int connessioni = 0;
 
 	if(iResult == SOCKET_ERROR){
 		wprintf(L"listen function failed with error: %d\n", WSAGetLastError());
@@ -145,9 +138,35 @@ int main(int argc, char* argv[]){
 	wprintf(L"Ascolto...\n");
 
 	char v = 0;
+	int peer_addrlen = sizeof(SOCKADDR_IN);
 
     while(v == 0){
-    	v = accepting(ListenSocket);
+    	connessioni++;
+
+    	thr_info *param = malloc(sizeof(thr_info));  //preparo i parametri utilizzati per l'accettazione e utilizzati nel thread
+		param->thread_number = connessioni;
+		memset(&(param->peer_addr), 0, peer_addrlen);
+
+    	param->AcceptSocket = accept(ListenSocket, (SOCKADDR *)&(param->peer_addr), &peer_addrlen);  //al ritorno dalla funzione, riceveremo l'indirizzo del peer in peer_addr
+
+    	if (param->AcceptSocket == INVALID_SOCKET) {
+        	wprintf(L"accept failed with error: %ld\n", WSAGetLastError());
+        	closesocket(ListenSocket);
+        	WSACleanup();
+        	return -1;
+    	} else{
+    		wprintf(L"\nNew Client connected:\n");
+ 		}
+
+    	HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)connecting, (void *) param, 0, 0);
+    	//v = accepting(ListenSocket);
+
+    	//senza thread dobbiamo disconnetterci dalla connessione 
+    	if (hThread == NULL){
+			printf("cannot create thread for incoming connection!\n");
+			closesocket(param->AcceptSocket);
+			free(param);
+		}
     }
 
 	iResult = closesocket(ListenSocket);
