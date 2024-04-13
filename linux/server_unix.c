@@ -17,7 +17,7 @@
 
 #include <poll.h>  //libreria per il polling del file descriptor (attendiamo che ci sia una richiesta i/o)
 
-#define MAX_QUEUE 10 //numero massimo di richieste di connessioni permesse in un dato momento
+#define MAX_QUEUE 1 //numero massimo di richieste di connessioni permesse in un dato momento
 
 typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
@@ -112,6 +112,7 @@ void *accepting(void *params){
 		data_size = read(sockfd_conn, buffer, 1024);
 
 		if(data_size <= 0){
+			printf("\nDisconnessione di %d\n",((thr_info *)params)->thread_number);
 			close(sockfd_conn);
 			free(params);
         	return NULL;	
