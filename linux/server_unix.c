@@ -123,6 +123,8 @@ void *accepting(void *params){
 
 		pointer = buffer;
 		printf("-----------------------------------------\n");
+		printf("%s :",inet_ntoa(peer_addr.sin_addr));
+
 		for(int i = 0; i < data_size; i++, pointer++){
 			putc(*pointer, stdout);
 		}
